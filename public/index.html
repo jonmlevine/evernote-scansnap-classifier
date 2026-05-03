@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ScanSnap Review</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="list-pane" aria-label="Candidate notes">
+        <header class="pane-header">
+          <div>
+            <h1>ScanSnap Review</h1>
+            <p id="statusLine">Loading imported notes...</p>
+          </div>
+          <button id="refreshButton" type="button" title="Refresh candidate notes">Refresh</button>
+        </header>
+        <ul id="candidateList" class="candidate-list" aria-live="polite"></ul>
+      </aside>
+
+      <div
+        id="leftResizeHandle"
+        class="resize-handle"
+        role="separator"
+        tabindex="0"
+        aria-label="Resize candidate notes panel"
+        aria-orientation="vertical"
+        aria-controls="candidateList"
+        data-resize-side="left"
+      ></div>
+
+      <section class="pdf-pane" aria-label="Attached document">
+        <header class="document-header">
+          <div>
+            <span class="label">Attached document</span>
+            <h2 id="documentTitle">Select a note</h2>
+          </div>
+          <a id="openPdfLink" class="secondary-action hidden" target="_blank" rel="noreferrer">Open</a>
+        </header>
+        <iframe id="pdfFrame" class="pdf-frame hidden" title="Attached document preview"></iframe>
+        <img id="imagePreview" class="image-preview hidden" alt="Attached document preview">
+        <div id="emptyPreview" class="empty-state">Choose a candidate note to review its attached document.</div>
+      </section>
+
+      <div
+        id="rightResizeHandle"
+        class="resize-handle"
+        role="separator"
+        tabindex="0"
+        aria-label="Resize suggested classification panel"
+        aria-orientation="vertical"
+        aria-controls="reviewForm"
+        data-resize-side="right"
+      ></div>
+
+      <aside class="editor-pane" aria-label="Suggested classification">
+        <form id="reviewForm" class="review-form">
+          <fieldset id="editorFields" disabled>
+            <label>
+              Title
+              <input id="titleInput" name="title" autocomplete="off">
+            </label>
+            <label>
+              Tags
+              <textarea id="tagsInput" name="tags" class="tags-textarea" rows="2" autocomplete="off" spellcheck="false"></textarea>
+            </label>
+            <label>
+              Destination notebook
+              <select id="notebookSelect" name="notebook"></select>
+            </label>
+            <label id="newNotebookRow" class="hidden">
+              New notebook name
+              <input id="newNotebookInput" name="newNotebook" autocomplete="off">
+            </label>
+            <div class="suggestion-meta">
+              <span id="confidenceText">No suggestion loaded</span>
+              <span id="ocrSourceText"></span>
+            </div>
+            <label>
+              OCR excerpt
+              <textarea id="ocrExcerpt" readonly></textarea>
+            </label>
+            <button id="applyButton" type="submit">Apply to Evernote</button>
+          </fieldset>
+        </form>
+      </aside>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

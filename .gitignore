@@ -1,0 +1,10 @@
+node_modules/
+.env
+.env.local
+coverage/
+.DS_Store
+*.log
+tmp/
+
+# Real correction logs and private tests belong in a private submodule.
+private/

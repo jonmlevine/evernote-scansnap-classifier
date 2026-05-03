@@ -1,0 +1,17 @@
+{
+  "name": "evernote-scansnap-classifier",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "description": "Local ScanSnap-to-Evernote review UI with an MVC API backend.",
+  "scripts": {
+    "dev": "node src/server.js",
+    "start": "node src/server.js",
+    "test": "bash scripts/run-tests.sh",
+    "test:public": "node --test test/*.test.js",
+    "test:private": "node --test private/test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
