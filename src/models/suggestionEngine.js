@@ -143,6 +143,16 @@ function documentDateFromText(text = "", { preferLabeledDate = false } = {}) {
   if (preferLabeledDate && statementPeriodRange) {
     return dateParts(statementPeriodRange[4], statementPeriodRange[5], statementPeriodRange[6]);
   }
+  const statementPeriodRangeBeforeLabel = text.match(
+    /\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\s*(?:-|to|through)\s*(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})[^\n]{0,80}statement\s+period\b/i
+  );
+  if (preferLabeledDate && statementPeriodRangeBeforeLabel) {
+    return dateParts(
+      statementPeriodRangeBeforeLabel[4],
+      statementPeriodRangeBeforeLabel[5],
+      statementPeriodRangeBeforeLabel[6]
+    );
+  }
   const namedDatePattern = `(${MONTH_WORD_PATTERN})\\s+([0-9lI]{1,2}),?\\s+(\\d{4})`;
   const namedStatementPeriodRange = text.match(
     new RegExp(
@@ -433,16 +443,19 @@ export class SuggestionEngine {
     const date = scanDateFromTitle(note.title || "");
     const mortgageContext = isMortgageText(haystack, this.rules);
     const inferredDate = documentDateFromText(ocrText, { preferLabeledDate: mortgageContext });
-    const fallbackTitle = mortgageContext
-      ? this.rules.fallbackTitle(`Mortgage ${inferredDate ? `${inferredDate.month} ${inferredDate.year}` : date || "Undated"} Statement`, {
-          context: haystack,
-          inferredDate,
-          date,
-          type: "mortgage",
-        })
+    const fallbackType = mortgageContext ? "mortgage" : "fallback";
+    const baseFallbackTitle = mortgageContext
+      ? `Mortgage ${inferredDate ? `${inferredDate.month} ${inferredDate.year}` : date || "Undated"} Statement`
       : cleaned
       ? titleCase(cleaned).split(" ").slice(0, 10).join(" ")
       : `${date || "Undated"} Scanned Document`;
+    const fallbackTitle = this.rules.fallbackTitle(baseFallbackTitle, {
+      context: haystack,
+      inferredDate,
+      date,
+      type: fallbackType,
+      tags,
+    });
 
     return {
       title: fallbackTitle,
