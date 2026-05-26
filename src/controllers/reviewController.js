@@ -36,6 +36,11 @@ export class ReviewController {
           return true;
         }
 
+        if (req.method === "POST" && parts[3] === "llm-suggestion") {
+          sendJson(res, 200, await this.reviewModel.getLlmSuggestion(id));
+          return true;
+        }
+
         if (req.method === "GET" && parts[3] === "pdf") {
           const pdf = await this.reviewModel.getCandidatePdf(id);
           sendBuffer(res, 200, pdf.buffer, pdf.contentType, pdf.filename);

@@ -1,4 +1,4 @@
-import { extractOcrText, htmlToText } from "./ocr.js";
+import { extractOcrText, htmlToText, mergeOcrText, ocrDisplayExcerpt, ocrLearningSample } from "./ocr.js";
 import { titleKey } from "./learningStore.js";
 
 function noteId(note) {
@@ -189,6 +189,22 @@ function timeoutError(message) {
   return error;
 }
 
+function hasSecondPageText(text = "") {
+  return /\bPage\s+2\s+of\s+\d+\b/i.test(text) || /\b2\s+of\s+\d+\b/i.test(text);
+}
+
+function referencesBackPage(text = "") {
+  return /\bsee\s+back\b|\bon\s+back\b|\bback\s+for\b|\bpolicy\s+details\b|\bcoverage\s+detail\s+on\s+back\b/i.test(
+    text
+  );
+}
+
+function pdfOcrStartPage(text = "") {
+  if (!String(text || "").trim()) return 1;
+  if (referencesBackPage(text) && !hasSecondPageText(text)) return 2;
+  return 0;
+}
+
 function withTimeout(promise, timeoutMs, message) {
   if (!timeoutMs) return promise;
   let timer;
@@ -207,14 +223,20 @@ export class ReviewNoteModel {
     localOcrStore,
     officeConverter = null,
     presentationConverter = null,
+    pdfOcrExtractor = null,
+    deterministicSuggestionEngine = null,
+    llmSuggestionEngine = null,
     maxCandidates = 100,
     listNotesTimeoutMs = 8000,
   }) {
     this.mcpClient = mcpClient;
     this.learningStore = learningStore;
     this.suggestionEngine = suggestionEngine;
+    this.deterministicSuggestionEngine = deterministicSuggestionEngine || suggestionEngine;
+    this.llmSuggestionEngine = llmSuggestionEngine;
     this.localOcrStore = localOcrStore;
     this.officeConverter = officeConverter || presentationConverter;
+    this.pdfOcrExtractor = pdfOcrExtractor;
     this.maxCandidates = maxCandidates;
     this.listNotesTimeoutMs = listNotesTimeoutMs;
   }
@@ -270,6 +292,15 @@ export class ReviewNoteModel {
   }
 
   async getCandidate(id) {
+    const context = await this.loadCandidateContext(id);
+    const suggestion = await this.suggestionEngine.suggest(context.noteWithResources, context.ocrText, {
+      notebooks: context.notebooks,
+      tags: context.tags,
+    });
+    return this.candidateDetailFromContext(context, suggestion);
+  }
+
+  async loadCandidateContext(id) {
     const [note, notebooks, tags] = await Promise.all([
       this.getReviewNote(id),
       this.mcpClient.listNotebooks(),
@@ -287,16 +318,56 @@ export class ReviewNoteModel {
 
     const resources = (await this.noteResources(note)).map((resource) => normalizeResource(resource, note.id));
     const noteWithResources = { ...note, resources };
-    const localOcrText = backendOcrText ? "" : await this.localOcrStore.findText(noteWithResources);
-    if (!backendOcrText && localOcrText) ocrSource = "local";
+    const localOcrText =
+      typeof this.localOcrStore?.findText === "function" ? await this.localOcrStore.findText(noteWithResources) : "";
+    const pdfResource = resources.find(isPdf) || null;
+    let ocrText = backendOcrText;
+    const ocrSources = [];
+    if (backendOcrText) ocrSources.push("backend");
+    if (localOcrText) {
+      const merged = mergeOcrText(ocrText, localOcrText);
+      if (merged !== ocrText) {
+        if (!ocrText) ocrSources.length = 0;
+        ocrSources.push("local");
+        ocrText = merged;
+      }
+    }
+
+    const pdfOcrText = await this.supplementalPdfOcrText({
+      noteId: note.id,
+      resource: pdfResource,
+      currentOcrText: ocrText,
+    });
+    if (pdfOcrText) {
+      const merged = mergeOcrText(ocrText, pdfOcrText);
+      if (merged !== ocrText) {
+        if (!ocrText) ocrSources.length = 0;
+        ocrSources.push("pdf");
+        ocrText = merged;
+      }
+    }
 
     const contentText = htmlToText(note.content || "");
-    const ocrText = backendOcrText || localOcrText || contentText;
-    const suggestion = await this.suggestionEngine.suggest(noteWithResources, ocrText);
-    const pdfResource = resources.find(isPdf) || null;
+    if (!ocrText) ocrText = contentText;
+    ocrSource = ocrSources.length ? ocrSources.join("+") : "none";
     const previewResource = pdfResource || resources.find(isDisplayableImage) || resources.find(isOfficeDocument) || null;
     const preview = previewResource ? previewMetadata(note.id, previewResource) : null;
 
+    return {
+      note,
+      resources,
+      noteWithResources,
+      ocrText,
+      ocrSource,
+      notebooks,
+      tags,
+      pdfResource,
+      preview,
+    };
+  }
+
+  candidateDetailFromContext(context, suggestion) {
+    const { note, resources, ocrText, ocrSource, notebooks, tags, pdfResource, preview } = context;
     return {
       id: note.id,
       title: note.title,
@@ -317,11 +388,64 @@ export class ReviewNoteModel {
       ocr: {
         source: ocrSource,
         text: ocrText,
-        excerpt: ocrText.slice(0, 1200),
+        excerpt: ocrDisplayExcerpt(ocrText),
       },
       notebooks,
       tags,
     };
+  }
+
+  async getLlmSuggestion(id) {
+    if (typeof this.llmSuggestionEngine?.suggestWithLlm !== "function") {
+      const error = new Error("LLM classification is not configured");
+      error.status = 503;
+      throw error;
+    }
+
+    const context = await this.loadCandidateContext(id);
+    const deterministicSuggestion = await this.deterministicSuggestionEngine.suggest(
+      context.noteWithResources,
+      context.ocrText,
+      { notebooks: context.notebooks, tags: context.tags }
+    );
+    const llmSuggestion = await this.llmSuggestionEngine.suggestWithLlm(
+      context.noteWithResources,
+      context.ocrText,
+      {
+        notebooks: context.notebooks,
+        tags: context.tags,
+        deterministicSuggestion,
+      }
+    );
+
+    return {
+      id: context.note.id,
+      deterministicSuggestion,
+      llmSuggestion,
+      ocr: {
+        source: context.ocrSource,
+        excerpt: ocrDisplayExcerpt(context.ocrText),
+      },
+    };
+  }
+
+  async supplementalPdfOcrText({ noteId, resource, currentOcrText }) {
+    if (!resource?.id || typeof this.pdfOcrExtractor?.extract !== "function") return "";
+
+    const fromPage = pdfOcrStartPage(currentOcrText);
+    if (!fromPage) return "";
+
+    try {
+      const data = await this.mcpClient.getResourceData(resource.id);
+      return await this.pdfOcrExtractor.extract({
+        buffer: data.buffer,
+        filename: resource.filename || `${noteId}.pdf`,
+        resourceId: resource.id,
+        fromPage,
+      });
+    } catch {
+      return "";
+    }
   }
 
   async getCandidatePreview(id) {
@@ -437,6 +561,9 @@ export class ReviewNoteModel {
     if (detail.suggestion.title !== finalTitle) changes.push("title");
     if (!sameTags(detail.suggestion.tags, finalTags)) changes.push("tags");
     if (notebook.name && !namesEqual(detail.suggestion.notebook, notebook.name)) changes.push("notebook");
+    if (String(input.selectedSuggestionSource || "").toLowerCase() === "llm" && !changes.includes("llm")) {
+      changes.push("llm");
+    }
 
     if (changes.length) {
       await this.learningStore.appendLearning({
@@ -445,7 +572,7 @@ export class ReviewNoteModel {
         suggestion: detail.suggestion,
         final: { title: finalTitle, tags: finalTags, notebook: notebook.name },
         changes,
-        ocrSample: detail.ocr.excerpt.slice(0, 180),
+        ocrSample: ocrLearningSample(detail.ocr.text),
       });
     }
 

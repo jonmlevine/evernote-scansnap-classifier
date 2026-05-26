@@ -26,6 +26,13 @@ export class ApiClient {
       body: JSON.stringify(payload),
     });
   }
+
+  runLlmClassifier(id, options = {}) {
+    return this.json(`/api/candidates/${encodeURIComponent(id)}/llm-suggestion`, {
+      method: "POST",
+      ...options,
+    });
+  }
 }
 
 export function joinTags(tags = []) {
@@ -42,6 +49,16 @@ export function splitTags(value = "") {
 export function confidenceText(suggestion = {}) {
   if (typeof suggestion.confidence !== "number") return "No confidence score";
   return `${Math.round(suggestion.confidence * 100)}% confidence - ${suggestion.reason || suggestion.source || "suggested"}`;
+}
+
+export function suggestionChoiceText(suggestion = {}) {
+  const parts = [
+    suggestion.title || "Untitled suggestion",
+    suggestion.notebook || "No notebook",
+    joinTags(suggestion.tags || []),
+    typeof suggestion.confidence === "number" ? `${Math.round(suggestion.confidence * 100)}%` : "",
+  ].filter(Boolean);
+  return parts.join(" | ");
 }
 
 export function candidateLabel(candidate) {
@@ -456,41 +473,106 @@ export class DetailView {
   }
 }
 
-class EditorView {
+export class EditorView {
   constructor(elements) {
     this.elements = elements;
+    this.deterministicSuggestion = null;
+    this.llmSuggestion = null;
+    this.selectedSuggestionSource = "deterministic";
     this.elements.notebook.addEventListener("change", () => this.syncNotebookMode());
+    this.elements.useDeterministic?.addEventListener("click", () => this.useSuggestion("deterministic"));
+    this.elements.useLlm?.addEventListener("click", () => this.useSuggestion("llm"));
   }
 
   render(detail) {
     const { suggestion } = detail;
+    this.deterministicSuggestion = suggestion || {};
+    this.llmSuggestion = null;
+    this.selectedSuggestionSource = "deterministic";
     this.elements.fields.disabled = false;
-    this.elements.title.value = suggestion.title || detail.title || "";
-    this.elements.tags.value = joinTags(suggestion.tags || []);
     this.elements.notebook.textContent = "";
-    const suggestedNotebookExists = (detail.notebooks || []).some((notebook) => notebook.name === suggestion.notebook);
     for (const notebook of detail.notebooks || []) {
       const option = document.createElement("option");
       option.value = notebook.name;
       option.textContent = notebook.name;
       option.dataset.id = notebook.id;
-      option.selected = notebook.name === suggestion.notebook;
       this.elements.notebook.append(option);
     }
     const newOption = document.createElement("option");
     newOption.value = NEW_NOTEBOOK_VALUE;
     newOption.textContent = "Create new notebook...";
     this.elements.notebook.append(newOption);
-    if (suggestion.notebook && !suggestedNotebookExists) {
-      newOption.selected = true;
-      this.elements.newNotebook.value = suggestion.notebook;
+    this.applySuggestionToFields(suggestion, "deterministic", { fallbackTitle: detail.title || "" });
+    this.elements.ocrSource.textContent = `OCR source: ${detail.ocr?.source || "none"}`;
+    this.elements.ocr.value = detail.ocr?.excerpt || "";
+    this.elements.runLlm.disabled = false;
+    this.elements.llmStatus.textContent = "";
+    this.renderSuggestionChoices();
+    this.syncNotebookMode();
+  }
+
+  setLlmLoading(loading) {
+    this.elements.runLlm.disabled = loading || this.elements.fields.disabled;
+    this.elements.llmStatus.textContent = loading ? "Running..." : "";
+  }
+
+  setLlmError(message) {
+    this.elements.runLlm.disabled = this.elements.fields.disabled;
+    this.elements.llmStatus.textContent = message || "LLM failed";
+  }
+
+  setLlmSuggestion(result = {}) {
+    this.deterministicSuggestion = result.deterministicSuggestion || this.deterministicSuggestion;
+    this.llmSuggestion = result.llmSuggestion || null;
+    this.elements.runLlm.disabled = false;
+    this.elements.llmStatus.textContent = this.llmSuggestion ? "Ready" : "No suggestion";
+    this.renderSuggestionChoices();
+  }
+
+  useSuggestion(source) {
+    const suggestion = source === "llm" ? this.llmSuggestion : this.deterministicSuggestion;
+    if (!suggestion) return;
+    this.applySuggestionToFields(suggestion, source);
+    this.renderSuggestionChoices();
+  }
+
+  applySuggestionToFields(suggestion = {}, source = "deterministic", { fallbackTitle = "" } = {}) {
+    this.selectedSuggestionSource = source;
+    this.elements.title.value = suggestion.title || fallbackTitle;
+    this.elements.tags.value = joinTags(suggestion.tags || []);
+    this.selectNotebook(suggestion.notebook || "");
+    this.elements.confidence.textContent = `${source === "llm" ? "LLM" : "Deterministic"}: ${confidenceText(suggestion)}`;
+  }
+
+  selectNotebook(name = "") {
+    let matched = false;
+    for (const option of this.elements.notebook.options || []) {
+      const isMatch = option.value !== NEW_NOTEBOOK_VALUE && option.value === name;
+      option.selected = isMatch;
+      matched = matched || isMatch;
+    }
+
+    if (name && !matched) {
+      this.elements.notebook.value = NEW_NOTEBOOK_VALUE;
+      this.elements.newNotebook.value = name;
     } else {
       this.elements.newNotebook.value = "";
     }
-    this.elements.confidence.textContent = confidenceText(suggestion);
-    this.elements.ocrSource.textContent = `OCR source: ${detail.ocr?.source || "none"}`;
-    this.elements.ocr.value = detail.ocr?.excerpt || "";
     this.syncNotebookMode();
+  }
+
+  renderSuggestionChoices() {
+    const hasLlm = Boolean(this.llmSuggestion);
+    this.elements.choices?.classList.toggle("hidden", !hasLlm);
+    if (!hasLlm) return;
+
+    this.elements.deterministicChoiceText.textContent = suggestionChoiceText(this.deterministicSuggestion || {});
+    this.elements.llmChoiceText.textContent = suggestionChoiceText(this.llmSuggestion || {});
+    this.elements.useDeterministic.classList.toggle(
+      "selected",
+      this.selectedSuggestionSource === "deterministic"
+    );
+    this.elements.useLlm.classList.toggle("selected", this.selectedSuggestionSource === "llm");
   }
 
   payload() {
@@ -503,6 +585,7 @@ class EditorView {
       notebook,
       notebookId: creatingNotebook ? "" : selected?.dataset.id || "",
       createNotebook: creatingNotebook,
+      selectedSuggestionSource: this.selectedSuggestionSource,
     };
   }
 
@@ -514,7 +597,7 @@ class EditorView {
 }
 
 export class ReviewController {
-  constructor({ api, listView, detailView, editorView, status, form, refreshButton }) {
+  constructor({ api, listView, detailView, editorView, status, form, refreshButton, runLlmButton }) {
     this.api = api;
     this.listView = listView;
     this.detailView = detailView;
@@ -522,14 +605,17 @@ export class ReviewController {
     this.status = status;
     this.form = form;
     this.refreshButton = refreshButton;
+    this.runLlmButton = runLlmButton;
     this.activeId = "";
     this.selectionRequestId = 0;
     this.detailAbortController = null;
+    this.llmAbortController = null;
   }
 
   bind() {
     this.refreshButton.addEventListener("click", () => this.loadCandidates());
     this.form.addEventListener("submit", (event) => this.apply(event));
+    this.runLlmButton?.addEventListener("click", () => this.runLlmClassifier());
   }
 
   async loadCandidates({ selectId = "" } = {}) {
@@ -550,6 +636,7 @@ export class ReviewController {
     this.activeId = id;
     const requestId = ++this.selectionRequestId;
     this.detailAbortController?.abort();
+    this.llmAbortController?.abort();
     this.detailAbortController = typeof AbortController === "undefined" ? null : new AbortController();
     this.listView.setActive(id);
     this.detailView.renderLoading?.(id);
@@ -569,6 +656,30 @@ export class ReviewController {
       this.status.textContent = "Review suggestion and apply changes";
     } catch (error) {
       if (requestId !== this.selectionRequestId || this.activeId !== id) return;
+      this.status.textContent = error.message;
+    }
+  }
+
+  async runLlmClassifier() {
+    if (!this.activeId) return;
+    const id = this.activeId;
+    const requestId = this.selectionRequestId;
+    this.llmAbortController?.abort();
+    this.llmAbortController = typeof AbortController === "undefined" ? null : new AbortController();
+    this.editorView.setLlmLoading(true);
+    this.status.textContent = "Running LLM classifier...";
+
+    try {
+      const result = await this.api.runLlmClassifier(
+        id,
+        this.llmAbortController ? { signal: this.llmAbortController.signal } : {}
+      );
+      if (requestId !== this.selectionRequestId || this.activeId !== id) return;
+      this.editorView.setLlmSuggestion(result);
+      this.status.textContent = "LLM suggestion ready";
+    } catch (error) {
+      if (requestId !== this.selectionRequestId || this.activeId !== id) return;
+      this.editorView.setLlmError(error.message);
       this.status.textContent = error.message;
     }
   }
@@ -619,6 +730,13 @@ function bootstrap() {
     confidence: document.getElementById("confidenceText"),
     ocrSource: document.getElementById("ocrSourceText"),
     ocr: document.getElementById("ocrExcerpt"),
+    runLlm: document.getElementById("runLlmButton"),
+    llmStatus: document.getElementById("llmStatusText"),
+    choices: document.getElementById("suggestionChoices"),
+    useDeterministic: document.getElementById("useDeterministicButton"),
+    useLlm: document.getElementById("useLlmButton"),
+    deterministicChoiceText: document.getElementById("deterministicChoiceText"),
+    llmChoiceText: document.getElementById("llmChoiceText"),
   });
   const controller = new ReviewController({
     api: new ApiClient(),
@@ -628,6 +746,7 @@ function bootstrap() {
     status: document.getElementById("statusLine"),
     form: document.getElementById("reviewForm"),
     refreshButton: document.getElementById("refreshButton"),
+    runLlmButton: document.getElementById("runLlmButton"),
   });
   controller.bind();
   controller.loadCandidates();

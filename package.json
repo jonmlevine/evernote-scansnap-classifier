@@ -5,8 +5,9 @@
   "type": "module",
   "description": "Local ScanSnap-to-Evernote review UI with an MVC API backend.",
   "scripts": {
-    "dev": "node src/server.js",
-    "start": "node src/server.js",
+    "dev": "bash scripts/start-classifier.sh",
+    "start": "bash scripts/start-classifier.sh",
+    "compare:llm": "bash scripts/compare-llm-models.sh",
     "test": "bash scripts/run-tests.sh",
     "test:public": "node --test test/*.test.js",
     "test:private": "node --test private/test/*.test.js"

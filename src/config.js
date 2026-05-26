@@ -16,6 +16,16 @@ function defaultOfficeConverterCommand(env) {
   return "soffice";
 }
 
+function defaultPdfOcrCommand(env) {
+  if (env.SCANSNAP_PDF_OCR_COMMAND !== undefined) return env.SCANSNAP_PDF_OCR_COMMAND;
+  if (process.platform === "darwin" && existsSync("/usr/bin/swift")) return "/usr/bin/swift";
+  return "";
+}
+
+function enabled(value = "") {
+  return ["1", "true", "yes", "on"].includes(String(value).toLowerCase());
+}
+
 export function getConfig(env = process.env) {
   return {
     port: Number.parseInt(env.PORT || "5175", 10),
@@ -47,6 +57,27 @@ export function getConfig(env = process.env) {
       env.SCANSNAP_OFFICE_CONVERTER_TIMEOUT_MS || env.SCANSNAP_PRESENTATION_CONVERTER_TIMEOUT_MS || "30000",
       10
     ),
+    pdfOcrCacheDir: env.SCANSNAP_PDF_OCR_CACHE_DIR || resolve(repoRoot, "tmp/pdf-ocr"),
+    pdfOcrCommand: defaultPdfOcrCommand(env),
+    pdfOcrScriptPath: env.SCANSNAP_PDF_OCR_SCRIPT_PATH || resolve(repoRoot, "scripts/pdf-ocr-macos.swift"),
+    pdfOcrTimeoutMs: Number.parseInt(env.SCANSNAP_PDF_OCR_TIMEOUT_MS || "120000", 10),
+    pdfOcrMaxPages: Number.parseInt(env.SCANSNAP_PDF_OCR_MAX_PAGES || "6", 10),
     maxCandidates: Number.parseInt(env.SCANSNAP_MAX_CANDIDATES || "100", 10),
+    llm: {
+      enabled: enabled(env.SCANSNAP_LLM_ENABLED),
+      apiKey: env.SCANSNAP_LLM_API_KEY || env.OPENAI_API_KEY || "",
+      apiBase: env.SCANSNAP_LLM_API_BASE || "https://api.openai.com/v1",
+      model: env.SCANSNAP_LLM_MODEL || "gpt-4.1-mini",
+      responseFormat: env.SCANSNAP_LLM_RESPONSE_FORMAT || "json_schema",
+      disableThinking: ["1", "true", "yes", "on"].includes(
+        String(env.SCANSNAP_LLM_DISABLE_THINKING || "").toLowerCase()
+      ),
+      timeoutMs: Number.parseInt(env.SCANSNAP_LLM_TIMEOUT_MS || "600000", 10),
+      maxOcrChars: Number.parseInt(env.SCANSNAP_LLM_MAX_OCR_CHARS || "12000", 10),
+      maxExamples: Number.parseInt(env.SCANSNAP_LLM_MAX_EXAMPLES || "8", 10),
+      verificationEnabled: !["0", "false", "no", "off"].includes(
+        String(env.SCANSNAP_LLM_VERIFICATION_ENABLED || "true").toLowerCase()
+      ),
+    },
   };
 }

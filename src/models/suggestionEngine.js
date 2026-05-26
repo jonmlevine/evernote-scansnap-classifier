@@ -29,8 +29,54 @@ const STRONG_MATCH_TOKENS = new Set([
   "mortgage",
   "pharmacy",
   "policy",
+  "ira",
   "retirement",
 ]);
+const BROAD_CONFIDENCE_TOKENS = new Set([
+  ...GENERIC_MATCH_TOKENS,
+  "banking",
+  "document",
+  "insurance",
+  "investment",
+  "letter",
+  "medical",
+  "mortgage",
+  "policy",
+  "private",
+  "retirement",
+  "statement",
+  "statements",
+]);
+const BASE_RULE_TAG_VOCABULARY = [
+  "Medical",
+  "Statements",
+  "Mortgage",
+  "Banking",
+  "Investment",
+  "Receipts",
+  "Insurance",
+];
+const BASE_RULE_NOTEBOOK_VOCABULARY = [
+  "Scanned Items Notebook",
+  "Medical",
+  "Banking",
+  "Investment",
+  "Insurance",
+  "Receipts",
+];
+
+function uniqueStrings(values = []) {
+  const seen = new Set();
+  const result = [];
+  for (const value of values) {
+    const text = String(value || "").trim();
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) continue;
+    seen.add(key);
+    result.push(text);
+  }
+  return result;
+}
 
 function tokenize(value = "", { forMatch = false } = {}) {
   return value
@@ -310,12 +356,79 @@ function inferNotebook(tags, rules = defaultClassificationRules) {
   return rules.inferNotebook(tags, notebook);
 }
 
+function normalizeDateForPrompt(date) {
+  if (!date) return null;
+  return {
+    month: date.month,
+    day: date.day,
+    year: date.year,
+  };
+}
+
+export function ruleEngineContextForNote(note, ocrText = "", rules = defaultClassificationRules) {
+  const mergedRules = mergeClassificationRules(rules);
+  const haystack = `${note.title || ""} ${ocrText}`.toLowerCase();
+  const tags = inferTags(haystack, mergedRules);
+  const notebook = inferNotebook(tags, mergedRules);
+  const context = {
+    matchTokens: [...matchTokenSet(haystack)].sort(),
+    suggestedTags: tags,
+    suggestedNotebooks: notebook ? [notebook] : [],
+    suggestedNotebook: notebook,
+    choiceSet: {
+      candidateTags: uniqueStrings([
+        ...BASE_RULE_TAG_VOCABULARY,
+        ...(mergedRules.tagVocabulary || []),
+        ...tags,
+      ]),
+      candidateNotebooks: uniqueStrings([
+        ...BASE_RULE_NOTEBOOK_VOCABULARY,
+        ...(mergedRules.notebookVocabulary || []),
+        notebook,
+      ]),
+      strongMatchTokens: uniqueStrings([
+        ...STRONG_MATCH_TOKENS,
+        ...(mergedRules.strongMatchTokens || []),
+      ]).sort((left, right) => left.localeCompare(right)),
+    },
+    instructions: uniqueStrings(mergedRules.llmInstructions || []),
+    classifierInstructions: uniqueStrings(mergedRules.classifierInstructions || []),
+    verifierInstructions: uniqueStrings(mergedRules.verifierInstructions || []),
+    scanImportDate: scanDateFromTitle(note.title || "") || null,
+    cleanedScanTitle: cleanupTitleFromScanTitle(note.title || ""),
+    detectedDocumentDate: normalizeDateForPrompt(documentDateFromText(ocrText, { preferLabeledDate: true })),
+    documentTypes: [...documentTypes(haystack, mergedRules)].sort(),
+  };
+  return context;
+}
+
 function exampleText(example) {
   return `${example.originalTitle} ${example.suggestedTitle} ${example.ocrEvidence} ${example.suggestedTags.join(" ")}`;
 }
 
 function matchTokenSet(value) {
-  return new Set(tokenize(value, { forMatch: true }));
+  return new Set([...tokenize(value, { forMatch: true }), ...identifierTokens(value)]);
+}
+
+function identifierTokens(value = "") {
+  const text = String(value || "");
+  const tokens = [];
+  const patterns = [
+    /\b(?:account|acct)\s*(?:number|#|no\.?)\s*[:#]?\s*([A-Z0-9][A-Z0-9\s-]{4,40})/gi,
+    /\bpolicy\s*(?:number|#|no\.?)\s*[:#]?\s*([A-Z0-9][A-Z0-9\s-]{4,40})/gi,
+  ];
+
+  for (const line of text.split(/\r?\n/)) {
+    for (const pattern of patterns) {
+      for (const match of line.matchAll(pattern)) {
+        const normalized = String(match[1] || "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+        const digitCount = (normalized.match(/\d/g) || []).length;
+        if (normalized.length >= 5 && digitCount >= 4) tokens.push(`id${normalized}`);
+      }
+    }
+  }
+
+  return tokens;
 }
 
 function documentFrequency(examples) {
@@ -329,6 +442,7 @@ function documentFrequency(examples) {
 }
 
 function tokenWeight(token, frequency, totalExamples, rules = defaultClassificationRules) {
+  if (/^id[a-z0-9]{5,}$/.test(token)) return 6;
   if (/^\d{6,}$/.test(token)) return 4;
   if (STRONG_MATCH_TOKENS.has(token) || rules.strongMatchTokens.includes(token)) return 3;
   const count = frequency.get(token) || 0;
@@ -366,7 +480,11 @@ function scoreExample(example, haystackTokens, haystackText, frequency, totalExa
   const exampleTextValue = exampleText(example);
   const overlaps = [...matchTokenSet(exampleTextValue)].filter((token) => haystackTokens.has(token));
   const strongMatches = overlaps.filter(
-    (token) => STRONG_MATCH_TOKENS.has(token) || rules.strongMatchTokens.includes(token) || /^\d{6,}$/.test(token)
+    (token) =>
+      STRONG_MATCH_TOKENS.has(token) ||
+      rules.strongMatchTokens.includes(token) ||
+      /^id[a-z0-9]{5,}$/.test(token) ||
+      /^\d{6,}$/.test(token)
   );
   const typeMatch = documentTypeScore(haystackText, exampleTextValue, rules);
   const score = typeMatch.score + overlaps.reduce(
@@ -374,6 +492,83 @@ function scoreExample(example, haystackTokens, haystackText, frequency, totalExa
     0
   );
   return { score, overlaps, strongMatches: [...strongMatches, ...typeMatch.strongMatches] };
+}
+
+function distinctiveExampleTokens(example, rules = defaultClassificationRules) {
+  const strongTokens = new Set([
+    ...STRONG_MATCH_TOKENS,
+    ...(rules.strongMatchTokens || []),
+  ].map((token) => token.toLowerCase()));
+  return [...matchTokenSet(exampleText(example))]
+    .filter((token) => strongTokens.has(token) || /^id[a-z0-9]{5,}$/.test(token))
+    .filter((token) => !BROAD_CONFIDENCE_TOKENS.has(token));
+}
+
+function evidenceAwareConfidence(confidence, example, evidenceTokens, rules = defaultClassificationRules) {
+  return evidenceAwareConfidenceForText(confidence, example, "", evidenceTokens, rules);
+}
+
+function productConflictReason(example, evidenceText = "") {
+  const learned = exampleText(example).toLowerCase();
+  const primaryEvidence = String(evidenceText || "").slice(0, 2500).toLowerCase();
+  if (/\bcitigold\b/.test(primaryEvidence) && /\bira\b/.test(learned) && !/\bcitigold\b/.test(learned)) {
+    return "current document header conflicts with learned IRA pattern";
+  }
+  return "";
+}
+
+function evidenceAwareConfidenceForText(
+  confidence,
+  example,
+  evidenceText = "",
+  evidenceTokens = matchTokenSet(evidenceText),
+  rules = defaultClassificationRules
+) {
+  if (!evidenceTokens.size) return { confidence, reasonSuffix: "" };
+  const distinctiveTokens = distinctiveExampleTokens(example, rules);
+  if (!distinctiveTokens.length) return { confidence, reasonSuffix: "" };
+
+  const matchedDistinctiveTokens = distinctiveTokens.filter((token) => evidenceTokens.has(token));
+  const exampleIdentifierTokens = distinctiveTokens.filter((token) => /^id[a-z0-9]{5,}$/.test(token));
+  const evidenceIdentifierTokens = [...evidenceTokens].filter((token) => /^id[a-z0-9]{5,}$/.test(token));
+  const matchedIdentifierTokens = exampleIdentifierTokens.filter((token) => evidenceTokens.has(token));
+
+  if (exampleIdentifierTokens.length && evidenceIdentifierTokens.length) {
+    if (matchedIdentifierTokens.length) {
+      return {
+        confidence: Math.max(confidence, 0.92),
+        reasonSuffix: "",
+      };
+    }
+    return {
+      confidence: Math.min(confidence, 0.49),
+      reasonSuffix: "; mismatched learned-pattern identifiers",
+    };
+  }
+
+  const productConflict = productConflictReason(example, evidenceText);
+  if (productConflict) {
+    return {
+      confidence: Math.min(confidence, 0.49),
+      reasonSuffix: `; ${productConflict}`,
+    };
+  }
+
+  if (
+    matchedDistinctiveTokens.length &&
+    matchedDistinctiveTokens.length / distinctiveTokens.length >= 0.75
+  ) {
+    return { confidence, reasonSuffix: "" };
+  }
+
+  return {
+    confidence: Math.min(confidence, 0.49),
+    reasonSuffix: "; missing distinctive learned-pattern evidence",
+  };
+}
+
+function closestPatternConfidence(score, example, evidenceText, rules = defaultClassificationRules) {
+  return evidenceAwareConfidenceForText(Math.min(0.85, 0.55 + score / 25), example, evidenceText, undefined, rules);
 }
 
 function findExactOriginalTitleExample(examples, title) {
@@ -392,6 +587,10 @@ export class SuggestionEngine {
     this.rules = mergeClassificationRules(rules);
   }
 
+  ruleContext(note, ocrText = "") {
+    return ruleEngineContextForNote(note, ocrText, this.rules);
+  }
+
   async suggest(note, ocrText = "") {
     const { examples, byGuid, byOriginalTitle } = await this.learningStore.load();
     const exact = byGuid.get(note.id);
@@ -402,15 +601,36 @@ export class SuggestionEngine {
       });
     }
 
+    const haystack = `${note.title || ""} ${ocrText}`.toLowerCase();
+    const directSuggestion = this.rules.directSuggestion(note, ocrText, {
+      context: haystack,
+      inferredDate: documentDateFromText(ocrText, { preferLabeledDate: true }),
+      scanDate: scanDateFromTitle(note.title || ""),
+    });
+    if (directSuggestion) {
+      return {
+        title: normalizeSuggestedTitle(directSuggestion.title || "", {
+          tags: directSuggestion.tags || [],
+          ocrText,
+          rules: this.rules,
+        }),
+        tags: directSuggestion.tags || [],
+        notebook: directSuggestion.notebook || inferNotebook(directSuggestion.tags || [], this.rules),
+        confidence: directSuggestion.confidence ?? 0.85,
+        reason: directSuggestion.reason || "Direct rule match from OCR",
+        source: directSuggestion.source || "rules",
+      };
+    }
+
     const exactTitle = byOriginalTitle?.get(titleKey(note.title)) || findExactOriginalTitleExample(examples, note.title);
     if (exactTitle) {
-      return this.fromExample(exactTitle, "Exact match from existing ScanSnap title", 0.9, {
+      const confidence = evidenceAwareConfidenceForText(0.9, exactTitle, ocrText, undefined, this.rules);
+      return this.fromExample(exactTitle, `Exact match from existing ScanSnap title${confidence.reasonSuffix}`, confidence.confidence, {
         ocrText,
         preserveClassification: true,
       });
     }
 
-    const haystack = `${note.title || ""} ${ocrText}`.toLowerCase();
     const haystackTokens = matchTokenSet(haystack);
     const frequency = documentFrequency(examples);
     let best = null;
@@ -430,10 +650,11 @@ export class SuggestionEngine {
     }
 
     if (best) {
+      const confidence = closestPatternConfidence(bestScore, best, ocrText, this.rules);
       return this.fromExample(
         best,
-        `Closest learned pattern matched ${bestMatch.strongMatches.slice(0, 4).join(", ")}`,
-        Math.min(0.85, 0.55 + bestScore / 25),
+        `Closest learned pattern matched ${bestMatch.strongMatches.slice(0, 4).join(", ")}${confidence.reasonSuffix}`,
+        confidence.confidence,
         { ocrText }
       );
     }

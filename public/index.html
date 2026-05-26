@@ -77,6 +77,20 @@
               <span id="confidenceText">No suggestion loaded</span>
               <span id="ocrSourceText"></span>
             </div>
+            <div class="llm-actions">
+              <button id="runLlmButton" type="button">Run LLM</button>
+              <span id="llmStatusText"></span>
+            </div>
+            <div id="suggestionChoices" class="suggestion-choices hidden">
+              <button id="useDeterministicButton" type="button" class="suggestion-choice" data-source="deterministic">
+                <span class="choice-label">Deterministic</span>
+                <span id="deterministicChoiceText" class="choice-text"></span>
+              </button>
+              <button id="useLlmButton" type="button" class="suggestion-choice" data-source="llm">
+                <span class="choice-label">LLM</span>
+                <span id="llmChoiceText" class="choice-text"></span>
+              </button>
+            </div>
             <label>
               OCR excerpt
               <textarea id="ocrExcerpt" readonly></textarea>

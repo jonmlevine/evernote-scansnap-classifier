@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
   DetailView,
+  EditorView,
   PaneResizeController,
   ReviewController,
   candidatePdfPreviewUrl,
@@ -13,6 +14,7 @@ import {
   candidatePreviewUrl,
   confidenceText,
   joinTags,
+  suggestionChoiceText,
   splitTags,
 } from "../public/app.js";
 
@@ -164,21 +166,21 @@ describe("UI helpers", () => {
   });
 
   it("formats tag input consistently", () => {
-    assert.equal(joinTags(["Investment", "Tax"]), "Investment; Tax");
-    assert.deepEqual(splitTags("Investment; Tax, Owner"), ["Investment", "Tax", "Owner"]);
+    assert.equal(joinTags(["Topic A", "Topic B"]), "Topic A; Topic B");
+    assert.deepEqual(splitTags("Topic A; Topic B, Topic C"), ["Topic A", "Topic B", "Topic C"]);
   });
 
   it("shows confidence and candidate labels", () => {
-    assert.equal(candidateLabel({ title: "20260420_scan", suggestedTitle: "Brokerage Letter" }), "Brokerage Letter");
-    assert.equal(candidateSubtitle({ title: "20260420_scan", suggestedTitle: "Brokerage Letter" }), "20260420_scan");
-    assert.equal(candidateSubtitle({ title: "Brokerage Letter", suggestedTitle: "Brokerage Letter", suggestedNotebook: "Investment" }), "Investment");
+    assert.equal(candidateLabel({ title: "20260420_scan", suggestedTitle: "Review Letter" }), "Review Letter");
+    assert.equal(candidateSubtitle({ title: "20260420_scan", suggestedTitle: "Review Letter" }), "20260420_scan");
+    assert.equal(candidateSubtitle({ title: "Review Letter", suggestedTitle: "Review Letter", suggestedNotebook: "Records" }), "Records");
     assert.equal(
       candidateSubtitle({
-        title: "Owner Prescription Information March 2026",
-        suggestedTitle: "Owner Prescription Information April 2026",
-        suggestedNotebook: "Medical",
+        title: "Original Document March 2026",
+        suggestedTitle: "Updated Document April 2026",
+        suggestedNotebook: "Target Notebook",
       }),
-      "Medical"
+      "Target Notebook"
     );
     assert.equal(candidateGuidText({ id: "note-guid-1" }), "GUID: note-guid-1");
     assert.equal(candidatePdfUrl("note id/with spaces"), "/api/candidates/note%20id%2Fwith%20spaces/pdf");
@@ -186,6 +188,15 @@ describe("UI helpers", () => {
     assert.equal(candidatePdfPreviewUrl("note id/with spaces"), "/api/candidates/note%20id%2Fwith%20spaces/pdf#view=FitH&zoom=page-width");
     assert.equal(candidatePdfPreviewUrl("note-id", { fitKey: 3 }), "/api/candidates/note-id/pdf?previewFit=3#view=FitH&zoom=page-width");
     assert.equal(confidenceText({ confidence: 0.84, reason: "learned match" }), "84% confidence - learned match");
+    assert.equal(
+      suggestionChoiceText({
+        title: "Review Title",
+        notebook: "Review Notebook",
+        tags: ["Tag A", "Tag B"],
+        confidence: 0.92,
+      }),
+      "Review Title | Review Notebook | Tag A; Tag B | 92%"
+    );
   });
 
   it("refreshes the PDF preview fit when the preview width changes", () => {
@@ -436,11 +447,17 @@ describe("UI helpers", () => {
     assert.match(html, /id="reviewForm"/);
     assert.match(html, /<textarea id="tagsInput"/);
     assert.match(html, /id="newNotebookInput"/);
+    assert.match(html, /id="runLlmButton"/);
+    assert.match(html, /id="suggestionChoices"/);
+    assert.match(html, /id="useDeterministicButton"/);
+    assert.match(html, /id="useLlmButton"/);
     assert.match(html, /Apply to Evernote/);
     assert.match(css, /--left-pane-width:\s*22rem/);
     assert.match(css, /--right-pane-width:\s*24rem/);
     assert.match(css, /\.resize-handle\s*{[^}]*cursor:\s*col-resize/s);
     assert.match(css, /\.candidate-guid\s*{[^}]*user-select:\s*text/s);
+    assert.match(css, /\.suggestion-choices\s*{/);
+    assert.match(css, /\.suggestion-choice\.selected\s*{/);
     assert.match(css, /\.pdf-frame\s*{[^}]*height:\s*calc\(100vh - 72px\)/s);
     assert.match(css, /input,\s*select,\s*textarea\s*{[^}]*width:\s*100%/s);
   });
@@ -498,6 +515,50 @@ describe("UI helpers", () => {
     assert.deepEqual(renderedEditors.map((detail) => detail.suggestion.title), ["Second Title"]);
     assert.equal(controller.activeId, "note-2");
     assert.equal(status.textContent, "Review suggestion and apply changes");
+  });
+
+  it("runs the LLM classifier for the active note", async () => {
+    const loadingStates = [];
+    const suggestions = [];
+    const requested = [];
+    const status = { textContent: "" };
+    const controller = new ReviewController({
+      api: {
+        async runLlmClassifier(id, options = {}) {
+          requested.push([id, Boolean(options.signal)]);
+          return {
+            id,
+            llmSuggestion: { title: "LLM Title", tags: ["Tag A"], notebook: "Notebook A" },
+            deterministicSuggestion: { title: "Rule Title", tags: ["Tag B"], notebook: "Notebook B" },
+          };
+        },
+      },
+      listView: { setActive() {} },
+      detailView: {},
+      editorView: {
+        setLlmLoading(value) {
+          loadingStates.push(value);
+        },
+        setLlmSuggestion(result) {
+          suggestions.push(result);
+        },
+        setLlmError(message) {
+          throw new Error(message);
+        },
+      },
+      status,
+      form: { addEventListener() {} },
+      refreshButton: { addEventListener() {} },
+    });
+    controller.activeId = "note-1";
+    controller.selectionRequestId = 3;
+
+    await controller.runLlmClassifier();
+
+    assert.deepEqual(requested, [["note-1", true]]);
+    assert.deepEqual(loadingStates, [true]);
+    assert.equal(suggestions[0].llmSuggestion.title, "LLM Title");
+    assert.equal(status.textContent, "LLM suggestion ready");
   });
 
   it("does not render note details returned for a different note id", async () => {

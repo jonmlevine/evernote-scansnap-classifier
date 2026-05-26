@@ -3,6 +3,14 @@ import { pathToFileURL } from "node:url";
 
 export const defaultClassificationRules = {
   strongMatchTokens: [],
+  tagVocabulary: [],
+  notebookVocabulary: [],
+  llmInstructions: [],
+  classifierInstructions: [],
+  verifierInstructions: [],
+  directSuggestion() {
+    return null;
+  },
   isMortgageText() {
     return false;
   },
