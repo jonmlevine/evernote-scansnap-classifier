@@ -30,6 +30,12 @@ function createClassList() {
     contains(value) {
       return this.values.has(value);
     },
+    toggle(value, force) {
+      const shouldAdd = force === undefined ? !this.values.has(value) : Boolean(force);
+      if (shouldAdd) this.values.add(value);
+      else this.values.delete(value);
+      return shouldAdd;
+    },
   };
 }
 
@@ -72,6 +78,37 @@ function createStorageMock(values = {}) {
       this.values[key] = value;
     },
   };
+}
+
+function createNotebookMock(names = []) {
+  const notebook = {
+    value: "",
+    options: [],
+    textContent: "",
+    addEventListener() {},
+    append(option) {
+      this.options.push(option);
+    },
+    get selectedOptions() {
+      return this.options.filter((option) => option.selected);
+    },
+  };
+  notebook.options = names.map((name) => {
+    let selected = false;
+    return {
+      value: name,
+      textContent: name,
+      dataset: { id: `${name}-id` },
+      get selected() {
+        return selected;
+      },
+      set selected(value) {
+        selected = Boolean(value);
+        if (selected) notebook.value = name;
+      },
+    };
+  });
+  return notebook;
 }
 
 function deferred() {
@@ -197,6 +234,62 @@ describe("UI helpers", () => {
       }),
       "Review Title | Review Notebook | Tag A; Tag B | 92%"
     );
+  });
+
+  it("shows selectable deterministic and LLM suggestion panels after an LLM run", () => {
+    const choices = { classList: createClassList() };
+    choices.classList.add("hidden");
+    const useDeterministic = createElementMock();
+    const useLlm = createElementMock();
+    const notebook = createNotebookMock(["Rule Notebook", "LLM Notebook"]);
+    const view = new EditorView({
+      fields: { disabled: false },
+      notebook,
+      newNotebook: { value: "", required: false },
+      newNotebookRow: { classList: createClassList() },
+      title: { value: "" },
+      tags: { value: "" },
+      confidence: { textContent: "" },
+      ocrSource: { textContent: "" },
+      ocr: { value: "" },
+      runLlm: { disabled: false },
+      llmStatus: { textContent: "" },
+      choices,
+      useDeterministic,
+      useLlm,
+      deterministicChoiceText: { textContent: "" },
+      llmChoiceText: { textContent: "" },
+    });
+
+    view.setLlmSuggestion({
+      deterministicSuggestion: {
+        title: "Rule Title",
+        tags: ["Rule Tag"],
+        notebook: "Rule Notebook",
+        confidence: 0.77,
+      },
+      llmSuggestion: {
+        title: "LLM Title",
+        tags: ["Tag A", "Tag B"],
+        notebook: "LLM Notebook",
+        confidence: 0.91,
+      },
+    });
+
+    assert.equal(choices.classList.contains("hidden"), false);
+    assert.match(view.elements.deterministicChoiceText.textContent, /Rule Title/);
+    assert.match(view.elements.llmChoiceText.textContent, /LLM Title/);
+    assert.equal(useDeterministic.attributes["aria-pressed"], "true");
+    assert.equal(useLlm.attributes["aria-pressed"], "false");
+
+    useLlm.listeners.click();
+
+    assert.equal(view.elements.title.value, "LLM Title");
+    assert.equal(view.elements.tags.value, "Tag A; Tag B");
+    assert.equal(notebook.value, "LLM Notebook");
+    assert.equal(useDeterministic.attributes["aria-pressed"], "false");
+    assert.equal(useLlm.attributes["aria-pressed"], "true");
+    assert.equal(view.payload().selectedSuggestionSource, "llm");
   });
 
   it("refreshes the PDF preview fit when the preview width changes", () => {

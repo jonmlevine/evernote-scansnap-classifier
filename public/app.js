@@ -564,15 +564,20 @@ export class EditorView {
   renderSuggestionChoices() {
     const hasLlm = Boolean(this.llmSuggestion);
     this.elements.choices?.classList.toggle("hidden", !hasLlm);
-    if (!hasLlm) return;
+    if (!hasLlm) {
+      if (this.elements.deterministicChoiceText) this.elements.deterministicChoiceText.textContent = "";
+      if (this.elements.llmChoiceText) this.elements.llmChoiceText.textContent = "";
+      return;
+    }
 
     this.elements.deterministicChoiceText.textContent = suggestionChoiceText(this.deterministicSuggestion || {});
     this.elements.llmChoiceText.textContent = suggestionChoiceText(this.llmSuggestion || {});
-    this.elements.useDeterministic.classList.toggle(
-      "selected",
-      this.selectedSuggestionSource === "deterministic"
-    );
-    this.elements.useLlm.classList.toggle("selected", this.selectedSuggestionSource === "llm");
+    const deterministicSelected = this.selectedSuggestionSource === "deterministic";
+    const llmSelected = this.selectedSuggestionSource === "llm";
+    this.elements.useDeterministic.classList.toggle("selected", deterministicSelected);
+    this.elements.useLlm.classList.toggle("selected", llmSelected);
+    this.elements.useDeterministic.setAttribute?.("aria-pressed", String(deterministicSelected));
+    this.elements.useLlm.setAttribute?.("aria-pressed", String(llmSelected));
   }
 
   payload() {

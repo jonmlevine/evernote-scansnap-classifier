@@ -46,16 +46,236 @@ function firstMessageContent(data) {
   return "";
 }
 
+function stripJsonFences(content = "") {
+  return String(content || "")
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+}
+
+const KNOWN_RESPONSE_KEYS = [
+  "accepted",
+  "title",
+  "tags",
+  "notebook",
+  "confidence",
+  "reason",
+  "evidence",
+  "issues",
+];
+const KNOWN_RESPONSE_KEY_PATTERN = KNOWN_RESPONSE_KEYS.join("|");
+
+function extractJsonBlock(content = "") {
+  const text = stripJsonFences(content);
+  const start = text.indexOf("{");
+  if (start < 0) return "";
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+    } else if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, index + 1);
+    }
+  }
+
+  const end = text.lastIndexOf("}");
+  return end > start ? text.slice(start, end + 1) : "";
+}
+
+function extractKnownResponseBlock(content = "") {
+  return extractKnownResponseBlocks(content)[0] || "";
+}
+
+function extractKnownResponseBlocks(content = "") {
+  const text = stripJsonFences(content);
+  const keyPattern = new RegExp(
+    `(?:"(?:${KNOWN_RESPONSE_KEY_PATTERN})"|(?:${KNOWN_RESPONSE_KEY_PATTERN}))\\s*:`,
+    "gi"
+  );
+  const blocks = [];
+  const seen = new Set();
+
+  for (const keyMatch of text.matchAll(keyPattern)) {
+    const keyIndex = keyMatch.index || 0;
+    const lineStart = Math.max(text.lastIndexOf("\n", keyIndex) + 1, 0);
+    const objectStart = text.lastIndexOf("{", keyIndex);
+    const start = objectStart >= 0 ? objectStart : lineStart;
+    const end = text.indexOf("}", keyIndex);
+    const block = end >= 0 ? text.slice(start, end + 1) : text.slice(start);
+    if (!block || seen.has(block)) continue;
+    seen.add(block);
+    blocks.push(block);
+  }
+
+  return blocks;
+}
+
+function withoutTrailingCommas(content = "") {
+  return content.replace(/,\s*([}\]])/g, "$1");
+}
+
+function hasKnownResponseField(value) {
+  return (
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    KNOWN_RESPONSE_KEYS.some((key) => Object.prototype.hasOwnProperty.call(value, key))
+  );
+}
+
+function isUsefulResponsePayload(value) {
+  if (!hasKnownResponseField(value)) return false;
+  if (String(value.title || "").trim() && String(value.notebook || "").trim()) return true;
+  return Object.prototype.hasOwnProperty.call(value, "accepted");
+}
+
+function parseKnownJsonObject(content = "") {
+  const parsed = JSON.parse(content);
+  return isUsefulResponsePayload(parsed) ? parsed : null;
+}
+
+function valueSlice(content = "", name = "") {
+  const key = content.match(new RegExp(`(?:"${name}"|${name})\\s*:`, "i"));
+  if (!key) return "";
+
+  const start = (key.index || 0) + key[0].length;
+  const rest = content.slice(start).trimStart();
+  const nextKey = new RegExp(
+    `"?\\s*(?:[,;]|\\r?\\n)\\s*(?:"(?:${KNOWN_RESPONSE_KEY_PATTERN})"|(?:${KNOWN_RESPONSE_KEY_PATTERN}))\\s*:`,
+    "i"
+  );
+
+  if (rest.startsWith("\"")) {
+    const body = rest.slice(1);
+    const delimiter = body.search(nextKey);
+    if (delimiter >= 0) return body.slice(0, delimiter).replace(/"\s*$/, "").trim();
+    return body.replace(/"\s*}?\s*$/s, "").trim();
+  }
+
+  const delimiter = rest.search(nextKey);
+  const rawValue = delimiter >= 0 ? rest.slice(0, delimiter) : rest;
+  return rawValue.replace(/[,}\]]+\s*$/s, "").trim();
+}
+
+function stringField(content = "", name = "") {
+  const pattern = new RegExp(`"${name}"\\s*:\\s*"([\\s\\S]*?)"\\s*(?=,\\s*"[A-Za-z_][A-Za-z0-9_]*"\\s*:|\\s*[}\\]])`, "i");
+  const match = content.match(pattern);
+  if (match?.[1]) return match[1].replace(/\\"/g, "\"").trim();
+  return valueSlice(content, name).replace(/^"|"$/g, "").replace(/\\"/g, "\"").trim();
+}
+
+function arrayField(content = "", name = "") {
+  const match = content.match(new RegExp(`"${name}"\\s*:\\s*\\[([\\s\\S]*?)\\]`, "i"));
+  const raw = match?.[1] || valueSlice(content, name).replace(/^\[/, "").replace(/\]\s*$/, "");
+  if (!raw) return [];
+  const values = [];
+  for (const valueMatch of raw.matchAll(/"([\s\S]*?)"\s*(?=,|$)/g)) {
+    const value = valueMatch[1].replace(/\\"/g, "\"").trim();
+    if (value) values.push(value);
+  }
+  if (values.length) return values;
+  return raw
+    .split(/[;,]/)
+    .map((value) => value.replace(/^['"\s]+|['"\s]+$/g, "").trim())
+    .filter(Boolean);
+}
+
+function numberField(content = "", name = "") {
+  const match = content.match(new RegExp(`"${name}"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)`, "i"));
+  return match ? Number(match[1]) : undefined;
+}
+
+function booleanField(content = "", name = "") {
+  const match = content.match(new RegExp(`"${name}"\\s*:\\s*(true|false)`, "i"));
+  return match ? match[1].toLowerCase() === "true" : undefined;
+}
+
+function salvageKnownJsonObject(content = "") {
+  const blocks = [
+    ...extractKnownResponseBlocks(content),
+    extractJsonBlock(content),
+    stripJsonFences(content),
+  ].filter(Boolean);
+
+  for (const objectText of blocks) {
+    const payload = {};
+    const title = stringField(objectText, "title");
+    const notebook = stringField(objectText, "notebook");
+    const reason = stringField(objectText, "reason");
+    const tags = arrayField(objectText, "tags");
+    const evidence = arrayField(objectText, "evidence");
+    const issues = arrayField(objectText, "issues");
+    const confidence = numberField(objectText, "confidence");
+    const accepted = booleanField(objectText, "accepted");
+
+    if (title) payload.title = title;
+    if (notebook) payload.notebook = notebook;
+    if (tags.length) payload.tags = tags;
+    if (evidence.length) payload.evidence = evidence;
+    if (issues.length) payload.issues = issues;
+    if (reason) payload.reason = reason;
+    if (confidence !== undefined) payload.confidence = confidence;
+    if (accepted !== undefined) payload.accepted = accepted;
+    if (isUsefulResponsePayload(payload)) return payload;
+  }
+
+  return null;
+}
+
 function parseJsonObject(content = "", data = null) {
   const trimmed = String(content || "").trim();
   if (!trimmed) throw createEmptyContentError(data);
 
+  const candidates = [
+    stripJsonFences(trimmed),
+    ...extractKnownResponseBlocks(trimmed),
+    extractJsonBlock(trimmed),
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = parseKnownJsonObject(candidate);
+      if (parsed) return parsed;
+    } catch {}
+
+    try {
+      const parsed = parseKnownJsonObject(withoutTrailingCommas(candidate));
+      if (parsed) return parsed;
+    } catch {}
+  }
+
+  const salvaged = salvageKnownJsonObject(trimmed);
+  if (salvaged) return salvaged;
+
   try {
     return JSON.parse(trimmed);
-  } catch {
-    const match = trimmed.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error("LLM response did not contain JSON");
-    return JSON.parse(match[0]);
+  } catch (error) {
+    const wrapped = new Error(`LLM response did not contain valid JSON: ${error.message}`);
+    wrapped.cause = error;
+    wrapped.details = {
+      contentLength: trimmed.length,
+      parseError: error.message,
+    };
+    throw wrapped;
   }
 }
 
@@ -100,6 +320,31 @@ export class OpenAiCompatibleLlmClient {
     return `${text}\n\n/no_think`;
   }
 
+  requestBody({ system, user, temperature, maxTokens, retry = false }) {
+    const retrySystem = retry
+      ? [
+          system,
+          "The previous response was invalid or truncated.",
+          "Return only one compact JSON object now.",
+          "Do not include reasoning, markdown, code fences, OCR quotes, or explanatory text.",
+          "Keep reason under 12 words and evidence or issues under 3 short strings.",
+        ].join(" ")
+      : system;
+    const retryUser = retry
+      ? `${user}\n\nReturn compact valid JSON only.`
+      : user;
+    return {
+      model: this.model,
+      messages: [
+        { role: "system", content: retrySystem },
+        { role: "user", content: this.userPrompt(retryUser) },
+      ],
+      temperature,
+      max_tokens: retry ? Math.min(maxTokens, 500) : maxTokens,
+      response_format: responseFormatPayload(this.responseFormat),
+    };
+  }
+
   async completeJson({ system, user, temperature = 0, maxTokens = 1200 }) {
     if (!this.apiKey) {
       const error = new Error("SCANSNAP_LLM_API_KEY or OPENAI_API_KEY is required when LLM classification is enabled");
@@ -110,39 +355,47 @@ export class OpenAiCompatibleLlmClient {
       throw new Error("No fetch implementation is available for LLM requests");
     }
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-    timer?.unref?.();
+    let lastParseError = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+      timer?.unref?.();
+      let response;
+      let text;
+      try {
+        response = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(this.requestBody({
+            system,
+            user,
+            temperature,
+            maxTokens,
+            retry: attempt > 0,
+          })),
+          signal: controller.signal,
+        });
+        text = await response.text();
+      } finally {
+        clearTimeout(timer);
+      }
 
-    try {
-      const response = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: this.model,
-          messages: [
-            { role: "system", content: system },
-            { role: "user", content: this.userPrompt(user) },
-          ],
-          temperature,
-          max_tokens: maxTokens,
-          response_format: responseFormatPayload(this.responseFormat),
-        }),
-        signal: controller.signal,
-      });
-
-      const text = await response.text();
       if (!response.ok) {
         throw new Error(`LLM request failed (${response.status}): ${text.slice(0, 300)}`);
       }
 
       const data = JSON.parse(text);
-      return parseJsonObject(firstMessageContent(data), data);
-    } finally {
-      clearTimeout(timer);
+      try {
+        return parseJsonObject(firstMessageContent(data), data);
+      } catch (error) {
+        lastParseError = error;
+        if (attempt === 0) continue;
+      }
     }
+
+    throw lastParseError;
   }
 }

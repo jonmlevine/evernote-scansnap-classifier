@@ -86,6 +86,7 @@ export class ClassificationAgent {
       "You classify scanned Evernote documents imported by ScanSnap.",
       "Return only JSON with title, tags, notebook, confidence, reason, and evidence.",
       "The response must be syntactically valid JSON; escape quotation marks and newlines inside string values, and keep evidence snippets short.",
+      "Avoid quotation marks inside string values when possible.",
       "Do not return a ScanSnap import title like YYYYMMDD_text.",
       "Use the document OCR for the document date; do not use the import date unless no document date exists.",
       "Prefer existing notebook and tag names when they match the document, but propose new tags when needed.",

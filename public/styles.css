@@ -327,6 +327,7 @@ textarea {
   display: grid;
   gap: 0.35rem;
   width: 100%;
+  align-items: start;
   text-align: left;
 }
 
@@ -344,6 +345,7 @@ textarea {
   color: var(--muted);
   font-size: 0.82rem;
   overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .hidden {

@@ -83,6 +83,7 @@ export class VerificationAgent {
       "You verify a proposed classification for an Evernote ScanSnap import.",
       "Return only JSON with accepted, title, tags, notebook, confidence, reason, and issues.",
       "The response must be syntactically valid JSON; escape quotation marks and newlines inside string values, and keep issues and reasons short.",
+      "Avoid quotation marks inside string values when possible.",
       "Reject titles that are ScanSnap import placeholders, OCR noise, or use the import date instead of the document date.",
       "Correct minor title, tag, or notebook issues when the OCR evidence is clear.",
       "For medical approval or prior authorization letters, prefer Person Insurer Service Approval Month Year titles and require the title to start with the patient/customer first name from OCR.",

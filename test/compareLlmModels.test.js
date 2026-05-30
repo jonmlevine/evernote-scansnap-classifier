@@ -328,6 +328,144 @@ describe("LM Studio comparison runner", () => {
     assert.equal(callCount, 2);
   });
 
+  it("salvages classification fields from nearly-JSON LM Studio responses", async () => {
+    let callCount = 0;
+    const responses = [
+      `{"title":"Alex CardCo April 29 2026 Letter","tags":["finance","card","CardCo","Alex"],"notebook":"Finance","confidence":0.82,"reason":"OCR says "CardCo" account services."}`,
+      `{"accepted":true,"title":"Alex CardCo April 29 2026 Letter","tags":["finance","card","CardCo","Alex"],"notebook":"Finance","confidence":0.84,"reason":"Verified "CardCo" evidence.","issues":[]}`,
+    ];
+    const sequentialFetch = async () => {
+      const content = responses[callCount];
+      callCount += 1;
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              finish_reason: "stop",
+              message: {
+                role: "assistant",
+                content,
+              },
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }
+      );
+    };
+
+    const result = await classifyWithModel({
+      model: "qwen/qwen3.6-35b-a3b",
+      ...comparisonContext(),
+      maxExamples: 0,
+      timeoutMs: 1000,
+      fetchImpl: sequentialFetch,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.suggestion.title, "Alex CardCo April 29 2026 Letter");
+    assert.equal(result.suggestion.notebook, "Finance");
+    assert.deepEqual(result.suggestion.tags, ["finance", "card", "CardCo", "Alex"]);
+    assert.equal(callCount, 2);
+  });
+
+  it("salvages expected fields when reasoning text precedes truncated JSON", async () => {
+    let callCount = 0;
+    const responses = [
+      `<think>I first considered {"not": "the final answer"} before classifying.</think>
+{"title":"Alex CardCo April 29 2026 Letter","tags":["finance","card","CardCo","Alex"],"notebook":"Finance","confidence":0.82,"reason":"The OCR identifies CardCo account services and the response was truncated`,
+      `{"accepted":true,"title":"Alex CardCo April 29 2026 Letter","tags":["finance","card","CardCo","Alex"],"notebook":"Finance","confidence":0.84,"reason":"Verified`,
+    ];
+    const sequentialFetch = async () => {
+      const content = responses[callCount];
+      callCount += 1;
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              finish_reason: "length",
+              message: {
+                role: "assistant",
+                content,
+              },
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }
+      );
+    };
+
+    const result = await classifyWithModel({
+      model: "qwen/qwen3.6-35b-a3b",
+      ...comparisonContext(),
+      maxExamples: 0,
+      timeoutMs: 1000,
+      fetchImpl: sequentialFetch,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.suggestion.title, "Alex CardCo April 29 2026 Letter");
+    assert.equal(result.suggestion.notebook, "Finance");
+    assert.deepEqual(result.suggestion.tags, ["finance", "card", "CardCo", "Alex"]);
+    assert.equal(callCount, 2);
+  });
+
+  it("retries with compact JSON instructions when the model returns unusable malformed JSON", async () => {
+    const requestBodies = [];
+    let callCount = 0;
+    const sequentialFetch = async (_url, init) => {
+      requestBodies.push(JSON.parse(init.body));
+      const content =
+        callCount === 0
+          ? `{"analysis":"This is not the classification and it never closes`
+          : JSON.stringify({
+              ...(callCount > 1 ? { accepted: true, issues: [] } : {}),
+              title: "Alex CardCo April 29 2026 Letter",
+              tags: ["finance", "card", "CardCo", "Alex"],
+              notebook: "Finance",
+              confidence: 0.82,
+              reason: "Verified.",
+            });
+      callCount += 1;
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              finish_reason: callCount === 1 ? "length" : "stop",
+              message: {
+                role: "assistant",
+                content,
+              },
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }
+      );
+    };
+
+    const result = await classifyWithModel({
+      model: "qwen/qwen3.6-35b-a3b",
+      ...comparisonContext(),
+      maxExamples: 0,
+      timeoutMs: 1000,
+      fetchImpl: sequentialFetch,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.suggestion.title, "Alex CardCo April 29 2026 Letter");
+    assert.equal(result.suggestion.notebook, "Finance");
+    assert.equal(callCount, 3);
+    assert.match(requestBodies[1].messages[0].content, /Return only one compact JSON object/);
+  });
+
   it("formats LLM error diagnostics from attached details", () => {
     const error = new Error("LLM response was empty");
     error.details = { messageKeys: ["role", "content"], contentLength: 0 };
