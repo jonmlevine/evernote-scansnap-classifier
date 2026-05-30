@@ -1,6 +1,6 @@
 {
   "name": "evernote-scansnap-classifier",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "license": "MIT",
   "type": "module",
   "description": "Local ScanSnap-to-Evernote review UI with an MVC API backend.",

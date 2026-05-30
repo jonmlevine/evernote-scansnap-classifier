@@ -22,6 +22,19 @@ export class ReviewController {
         return true;
       }
 
+      if (parts[0] === "api" && parts[1] === "llm" && parts[2] === "settings") {
+        if (req.method === "GET") {
+          sendJson(res, 200, this.reviewModel.getLlmSettings());
+          return true;
+        }
+
+        if (req.method === "PATCH" || req.method === "PUT" || req.method === "POST") {
+          const body = await readJsonBody(req);
+          sendJson(res, 200, this.reviewModel.updateLlmSettings(body));
+          return true;
+        }
+      }
+
       if (req.method === "GET" && url.pathname === "/api/candidates") {
         const limit = Number.parseInt(url.searchParams.get("limit") || "100", 10);
         sendJson(res, 200, { candidates: await this.reviewModel.listCandidates(limit) });

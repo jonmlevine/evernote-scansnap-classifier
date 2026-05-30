@@ -78,6 +78,17 @@
               <span id="ocrSourceText"></span>
             </div>
             <div class="llm-actions">
+              <label class="llm-model-field">
+                LLM model
+                <input id="llmModelInput" name="llmModel" list="llmModelOptions" autocomplete="off" spellcheck="false">
+                <datalist id="llmModelOptions">
+                  <option value="qwen/qwen3.6-27b"></option>
+                  <option value="qwen/qwen3.6-35b-a3b"></option>
+                  <option value="google/gemma-4-31b"></option>
+                  <option value="gemma-4-31b"></option>
+                </datalist>
+              </label>
+              <button id="saveLlmModelButton" type="button">Set Model</button>
               <button id="runLlmButton" type="button">Run LLM</button>
               <span id="llmStatusText"></span>
             </div>

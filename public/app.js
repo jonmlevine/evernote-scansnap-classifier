@@ -27,6 +27,17 @@ export class ApiClient {
     });
   }
 
+  getLlmSettings() {
+    return this.json("/api/llm/settings");
+  }
+
+  updateLlmSettings(payload) {
+    return this.json("/api/llm/settings", {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  }
+
   runLlmClassifier(id, options = {}) {
     return this.json(`/api/candidates/${encodeURIComponent(id)}/llm-suggestion`, {
       method: "POST",
@@ -521,6 +532,24 @@ export class EditorView {
     this.elements.llmStatus.textContent = message || "LLM failed";
   }
 
+  renderLlmSettings(settings = {}) {
+    if (this.elements.llmModel) this.elements.llmModel.value = settings.model || "";
+    if (this.elements.saveLlmModel) this.elements.saveLlmModel.disabled = !settings.configured;
+    if (this.elements.runLlm) this.elements.runLlm.disabled = !settings.configured || this.elements.fields.disabled;
+    this.elements.llmStatus.textContent = settings.configured
+      ? `LLM model: ${settings.model || "unset"}`
+      : "LLM classification is not configured";
+  }
+
+  llmModelValue() {
+    return String(this.elements.llmModel?.value || "").trim();
+  }
+
+  setLlmModelLoading(loading) {
+    if (this.elements.saveLlmModel) this.elements.saveLlmModel.disabled = loading;
+    this.elements.llmStatus.textContent = loading ? "Saving LLM model..." : "";
+  }
+
   setLlmSuggestion(result = {}) {
     this.deterministicSuggestion = result.deterministicSuggestion || this.deterministicSuggestion;
     this.llmSuggestion = result.llmSuggestion || null;
@@ -602,7 +631,7 @@ export class EditorView {
 }
 
 export class ReviewController {
-  constructor({ api, listView, detailView, editorView, status, form, refreshButton, runLlmButton }) {
+  constructor({ api, listView, detailView, editorView, status, form, refreshButton, runLlmButton, saveLlmModelButton }) {
     this.api = api;
     this.listView = listView;
     this.detailView = detailView;
@@ -611,6 +640,7 @@ export class ReviewController {
     this.form = form;
     this.refreshButton = refreshButton;
     this.runLlmButton = runLlmButton;
+    this.saveLlmModelButton = saveLlmModelButton;
     this.activeId = "";
     this.selectionRequestId = 0;
     this.detailAbortController = null;
@@ -621,6 +651,32 @@ export class ReviewController {
     this.refreshButton.addEventListener("click", () => this.loadCandidates());
     this.form.addEventListener("submit", (event) => this.apply(event));
     this.runLlmButton?.addEventListener("click", () => this.runLlmClassifier());
+    this.saveLlmModelButton?.addEventListener("click", () => this.saveLlmModel());
+    this.loadLlmSettings();
+  }
+
+  async loadLlmSettings() {
+    if (typeof this.api.getLlmSettings !== "function") return;
+    try {
+      const settings = await this.api.getLlmSettings();
+      this.editorView.renderLlmSettings?.(settings);
+    } catch (error) {
+      this.editorView.setLlmError?.(error.message);
+    }
+  }
+
+  async saveLlmModel() {
+    if (typeof this.api.updateLlmSettings !== "function") return;
+    const model = this.editorView.llmModelValue?.() || "";
+    this.editorView.setLlmModelLoading?.(true);
+    try {
+      const settings = await this.api.updateLlmSettings({ model });
+      this.editorView.renderLlmSettings?.(settings);
+      this.status.textContent = `LLM model set to ${settings.model}`;
+    } catch (error) {
+      this.editorView.setLlmError?.(error.message);
+      this.status.textContent = error.message;
+    }
   }
 
   async loadCandidates({ selectId = "" } = {}) {
@@ -735,6 +791,8 @@ function bootstrap() {
     confidence: document.getElementById("confidenceText"),
     ocrSource: document.getElementById("ocrSourceText"),
     ocr: document.getElementById("ocrExcerpt"),
+    llmModel: document.getElementById("llmModelInput"),
+    saveLlmModel: document.getElementById("saveLlmModelButton"),
     runLlm: document.getElementById("runLlmButton"),
     llmStatus: document.getElementById("llmStatusText"),
     choices: document.getElementById("suggestionChoices"),
@@ -752,6 +810,7 @@ function bootstrap() {
     form: document.getElementById("reviewForm"),
     refreshButton: document.getElementById("refreshButton"),
     runLlmButton: document.getElementById("runLlmButton"),
+    saveLlmModelButton: document.getElementById("saveLlmModelButton"),
   });
   controller.bind();
   controller.loadCandidates();

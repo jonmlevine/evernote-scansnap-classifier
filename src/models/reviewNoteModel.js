@@ -241,6 +241,25 @@ export class ReviewNoteModel {
     this.listNotesTimeoutMs = listNotesTimeoutMs;
   }
 
+  getLlmSettings() {
+    return {
+      configured: typeof this.llmSuggestionEngine?.suggestWithLlm === "function",
+      model: this.llmSuggestionEngine?.getModel?.() || "",
+    };
+  }
+
+  updateLlmSettings(input = {}) {
+    if (typeof this.llmSuggestionEngine?.setModel !== "function") {
+      const error = new Error("LLM classification is not configured");
+      error.status = 503;
+      throw error;
+    }
+    return {
+      configured: true,
+      model: this.llmSuggestionEngine.setModel(input.model),
+    };
+  }
+
   async listCandidates(limit = this.maxCandidates) {
     const requestedLimit = Number.isFinite(limit) && limit > 0 ? limit : this.maxCandidates;
     const maxResults = Math.min(this.maxCandidates, Math.max(requestedLimit, requestedLimit * 3));

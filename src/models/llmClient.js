@@ -320,6 +320,21 @@ export class OpenAiCompatibleLlmClient {
     return `${text}\n\n/no_think`;
   }
 
+  getModel() {
+    return this.model;
+  }
+
+  setModel(model = "") {
+    const value = String(model || "").trim();
+    if (!value) {
+      const error = new Error("LLM model is required");
+      error.status = 400;
+      throw error;
+    }
+    this.model = value;
+    return this.model;
+  }
+
   requestBody({ system, user, temperature, maxTokens, retry = false }) {
     const retrySystem = retry
       ? [

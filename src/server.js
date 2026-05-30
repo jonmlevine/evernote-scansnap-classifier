@@ -43,6 +43,7 @@ function createLlmSuggestionEngine({ config, learningStore, deterministicEngine 
   return new LlmSuggestionEngine({
     deterministicEngine,
     learningStore,
+    llmClient,
     harness: new ClassificationAgentHarness({ classificationAgent, verificationAgent }),
     maxExamples: config.llm.maxExamples,
   });

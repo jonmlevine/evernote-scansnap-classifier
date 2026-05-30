@@ -37,14 +37,32 @@ export class LlmSuggestionEngine {
     deterministicEngine,
     learningStore,
     harness,
+    llmClient = null,
     maxExamples = 8,
     deterministicConfidenceThreshold = 0.5,
   } = {}) {
     this.deterministicEngine = deterministicEngine;
     this.learningStore = learningStore;
     this.harness = harness;
+    this.llmClient = llmClient;
     this.maxExamples = maxExamples;
     this.deterministicConfidenceThreshold = deterministicConfidenceThreshold;
+  }
+
+  getModel() {
+    return this.llmClient?.getModel?.() || this.llmClient?.model || "";
+  }
+
+  setModel(model = "") {
+    if (typeof this.llmClient?.setModel === "function") return this.llmClient.setModel(model);
+    const value = String(model || "").trim();
+    if (!value) {
+      const error = new Error("LLM model is required");
+      error.status = 400;
+      throw error;
+    }
+    if (this.llmClient) this.llmClient.model = value;
+    return value;
   }
 
   shouldUseLlm(deterministicSuggestion) {

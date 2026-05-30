@@ -292,6 +292,40 @@ describe("UI helpers", () => {
     assert.equal(view.payload().selectedSuggestionSource, "llm");
   });
 
+  it("renders editable LLM model settings", () => {
+    const modelInput = { value: "" };
+    const saveModel = { disabled: false };
+    const runLlm = { disabled: false };
+    const view = new EditorView({
+      fields: { disabled: false },
+      notebook: createNotebookMock([]),
+      newNotebook: { value: "", required: false },
+      newNotebookRow: { classList: createClassList() },
+      title: { value: "" },
+      tags: { value: "" },
+      confidence: { textContent: "" },
+      ocrSource: { textContent: "" },
+      ocr: { value: "" },
+      llmModel: modelInput,
+      saveLlmModel: saveModel,
+      runLlm,
+      llmStatus: { textContent: "" },
+      choices: { classList: createClassList() },
+      useDeterministic: createElementMock(),
+      useLlm: createElementMock(),
+      deterministicChoiceText: { textContent: "" },
+      llmChoiceText: { textContent: "" },
+    });
+
+    view.renderLlmSettings({ configured: true, model: "qwen/qwen3.6-27b" });
+
+    assert.equal(modelInput.value, "qwen/qwen3.6-27b");
+    assert.equal(view.llmModelValue(), "qwen/qwen3.6-27b");
+    assert.equal(saveModel.disabled, false);
+    assert.equal(runLlm.disabled, false);
+    assert.match(view.elements.llmStatus.textContent, /qwen\/qwen3\.6-27b/);
+  });
+
   it("refreshes the PDF preview fit when the preview width changes", () => {
     const frame = {
       classList: createClassList(),
@@ -540,6 +574,8 @@ describe("UI helpers", () => {
     assert.match(html, /id="reviewForm"/);
     assert.match(html, /<textarea id="tagsInput"/);
     assert.match(html, /id="newNotebookInput"/);
+    assert.match(html, /id="llmModelInput"/);
+    assert.match(html, /id="saveLlmModelButton"/);
     assert.match(html, /id="runLlmButton"/);
     assert.match(html, /id="suggestionChoices"/);
     assert.match(html, /id="useDeterministicButton"/);
@@ -550,6 +586,7 @@ describe("UI helpers", () => {
     assert.match(css, /\.resize-handle\s*{[^}]*cursor:\s*col-resize/s);
     assert.match(css, /\.candidate-guid\s*{[^}]*user-select:\s*text/s);
     assert.match(css, /\.suggestion-choices\s*{/);
+    assert.match(css, /\.llm-model-field\s*{/);
     assert.match(css, /\.suggestion-choice\.selected\s*{/);
     assert.match(css, /\.pdf-frame\s*{[^}]*height:\s*calc\(100vh - 72px\)/s);
     assert.match(css, /input,\s*select,\s*textarea\s*{[^}]*width:\s*100%/s);
@@ -652,6 +689,47 @@ describe("UI helpers", () => {
     assert.deepEqual(loadingStates, [true]);
     assert.equal(suggestions[0].llmSuggestion.title, "LLM Title");
     assert.equal(status.textContent, "LLM suggestion ready");
+  });
+
+  it("updates the active LLM model from the UI", async () => {
+    const loadingStates = [];
+    const settings = [];
+    const requested = [];
+    const status = { textContent: "" };
+    const controller = new ReviewController({
+      api: {
+        async updateLlmSettings(payload) {
+          requested.push(payload);
+          return { configured: true, model: payload.model };
+        },
+      },
+      listView: { setActive() {} },
+      detailView: {},
+      editorView: {
+        llmModelValue() {
+          return "qwen/qwen3.6-27b";
+        },
+        setLlmModelLoading(value) {
+          loadingStates.push(value);
+        },
+        renderLlmSettings(value) {
+          settings.push(value);
+        },
+        setLlmError(message) {
+          throw new Error(message);
+        },
+      },
+      status,
+      form: { addEventListener() {} },
+      refreshButton: { addEventListener() {} },
+    });
+
+    await controller.saveLlmModel();
+
+    assert.deepEqual(requested, [{ model: "qwen/qwen3.6-27b" }]);
+    assert.deepEqual(loadingStates, [true]);
+    assert.deepEqual(settings, [{ configured: true, model: "qwen/qwen3.6-27b" }]);
+    assert.equal(status.textContent, "LLM model set to qwen/qwen3.6-27b");
   });
 
   it("does not render note details returned for a different note id", async () => {

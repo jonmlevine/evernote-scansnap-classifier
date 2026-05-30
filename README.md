@@ -38,7 +38,7 @@ SCANSNAP_LLM_TIMEOUT_MS=600000
 
 The adapter calls an OpenAI-compatible `/chat/completions` endpoint and can be pointed at another compatible service with `SCANSNAP_LLM_API_BASE`. The workflow runs a classification agent first, then a verification agent that rejects ScanSnap placeholder titles, OCR noise, missing notebooks, or low-confidence outputs before falling back to the deterministic suggestion.
 
-The review UI includes a `Run LLM` button for the selected note. It keeps the deterministic suggestion in the form, fetches a separate LLM suggestion on demand, and lets the reviewer choose either result before applying the Evernote update. Applying an LLM-selected result appends a row to `SCANSNAP_CLASSIFICATION_PATTERNS.md` so the deterministic engine can learn from that choice.
+The review UI includes an editable LLM model field plus a `Run LLM` button for the selected note. It keeps the deterministic suggestion in the form, fetches a separate LLM suggestion on demand, and lets the reviewer choose either result before applying the Evernote update. Applying an LLM-selected result appends a row to `SCANSNAP_CLASSIFICATION_PATTERNS.md` so the deterministic engine can learn from that choice.
 
 ### LM Studio Comparison
 
