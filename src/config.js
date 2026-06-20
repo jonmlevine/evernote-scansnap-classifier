@@ -63,6 +63,7 @@ export function getConfig(env = process.env) {
     pdfOcrTimeoutMs: Number.parseInt(env.SCANSNAP_PDF_OCR_TIMEOUT_MS || "120000", 10),
     pdfOcrMaxPages: Number.parseInt(env.SCANSNAP_PDF_OCR_MAX_PAGES || "6", 10),
     maxCandidates: Number.parseInt(env.SCANSNAP_MAX_CANDIDATES || "100", 10),
+    listNotesTimeoutMs: Number.parseInt(env.SCANSNAP_LIST_NOTES_TIMEOUT_MS || "30000", 10),
     llm: {
       enabled: enabled(env.SCANSNAP_LLM_ENABLED),
       apiKey: env.SCANSNAP_LLM_API_KEY || env.OPENAI_API_KEY || "",

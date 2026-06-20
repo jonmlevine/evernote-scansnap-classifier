@@ -227,7 +227,7 @@ export class ReviewNoteModel {
     deterministicSuggestionEngine = null,
     llmSuggestionEngine = null,
     maxCandidates = 100,
-    listNotesTimeoutMs = 8000,
+    listNotesTimeoutMs = 30000,
   }) {
     this.mcpClient = mcpClient;
     this.learningStore = learningStore;

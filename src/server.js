@@ -82,6 +82,7 @@ export function createDependencies(config = getConfig(), { rules } = {}) {
         maxPages: config.pdfOcrMaxPages,
       }),
       maxCandidates: config.maxCandidates,
+      listNotesTimeoutMs: config.listNotesTimeoutMs,
     }),
     publicDir: resolve(repoRoot, "public"),
   };

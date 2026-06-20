@@ -16,6 +16,7 @@ This project requires [Evernote MCP Server](https://github.com/jonmlevine/everno
 ## Local Configuration
 
 `npm run dev` and `npm start` source `~/.config/evernote-scansnap-classifier/env` before starting the server. Use that file for local-only settings such as API keys and path overrides. To use a different file for one run, set `SCANSNAP_ENV_FILE=/path/to/env`.
+If candidate loading is slow against your Evernote account, increase `SCANSNAP_LIST_NOTES_TIMEOUT_MS` from the default `30000`.
 
 Backend OCR is preferred, but matching local OCR text files under `SCANSNAP_LOCAL_OCR_DIR` are merged in when they add missing text such as second-page policy details. Local OCR filenames can match a note ID, sanitized note title, resource ID, or sanitized attachment filename, with `.txt` or `.ocr.txt` suffixes.
 
