@@ -502,7 +502,10 @@ export class EditorView {
     this.selectedSuggestionSource = "deterministic";
     this.elements.fields.disabled = false;
     this.elements.notebook.textContent = "";
-    for (const notebook of detail.notebooks || []) {
+    const notebooks = [...(detail.notebooks || [])].sort((left, right) =>
+      String(left?.name || "").localeCompare(String(right?.name || ""), undefined, { sensitivity: "base" })
+    );
+    for (const notebook of notebooks) {
       const option = document.createElement("option");
       option.value = notebook.name;
       option.textContent = notebook.name;

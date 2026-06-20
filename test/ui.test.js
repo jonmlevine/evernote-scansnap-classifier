@@ -326,6 +326,55 @@ describe("UI helpers", () => {
     assert.match(view.elements.llmStatus.textContent, /qwen\/qwen3\.6-27b/);
   });
 
+  it("alphabetizes destination notebook options", () => {
+    const notebook = createNotebookMock([]);
+    const view = new EditorView({
+      fields: { disabled: false },
+      notebook,
+      newNotebook: { value: "", required: false },
+      newNotebookRow: { classList: createClassList() },
+      title: { value: "" },
+      tags: { value: "" },
+      confidence: { textContent: "" },
+      ocrSource: { textContent: "" },
+      ocr: { value: "" },
+      runLlm: { disabled: false },
+      llmStatus: { textContent: "" },
+      choices: { classList: createClassList() },
+      useDeterministic: createElementMock(),
+      useLlm: createElementMock(),
+      deterministicChoiceText: { textContent: "" },
+      llmChoiceText: { textContent: "" },
+    });
+
+    const previousDocument = globalThis.document;
+    globalThis.document = {
+      createElement() {
+        return { value: "", textContent: "", dataset: {} };
+      },
+    };
+
+    try {
+      view.render({
+        title: "20260620_scan",
+        suggestion: { title: "Sorted Title", tags: [], notebook: "Banking" },
+        notebooks: [
+          { id: "nb-3", name: "zeta" },
+          { id: "nb-1", name: "Alpha" },
+          { id: "nb-2", name: "banking" },
+        ],
+        ocr: { source: "backend", excerpt: "" },
+      });
+    } finally {
+      globalThis.document = previousDocument;
+    }
+
+    assert.deepEqual(
+      notebook.options.slice(0, 3).map((option) => option.textContent),
+      ["Alpha", "banking", "zeta"]
+    );
+  });
+
   it("refreshes the PDF preview fit when the preview width changes", () => {
     const frame = {
       classList: createClassList(),
